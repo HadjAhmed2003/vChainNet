@@ -229,7 +229,6 @@ python traffic_generator_udp.py --client_ip <ip> --interface <interface> --traff
 Supported traffic types:
 - `poisson`: Poisson arrival process
 - `on_off`: ON-OFF traffic pattern
-- `map`: Markovian Arrival Process
 
 **Important**: The traffic generator must be deployed within the pod of the VNF preceding the target VNF being profiled to ensure accurate measurement of packet processing delays.
 

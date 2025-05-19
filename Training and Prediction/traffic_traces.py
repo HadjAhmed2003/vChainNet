@@ -50,6 +50,7 @@ class traffic_traces(Dataset):
         self.y = []
         self.indices = indices
         self.stats = stats
+        #read CSVs
         for path in paths:
             data = pd.read_csv(path)
             if "rate" in data.columns:

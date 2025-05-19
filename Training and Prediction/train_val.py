@@ -263,6 +263,8 @@ def get_global_min_max(paths, drop = False):
 
     return stats
 
+
+#Split the indices into train and test 
 def get_train_test_indices(paths, test_ratio=0.1, time_steps=42, drop=False):
     train_indices = []
     test_indices = []

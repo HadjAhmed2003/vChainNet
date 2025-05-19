@@ -4,45 +4,6 @@ import math
 from torch.autograd import Variable
 from typing import Tuple
 
-class PositionalEncoding(nn.Module):
-    "Implement the PE function."
-    def __init__(self, d_model, dropout, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        
-        # Compute the positional encodings once in log space.
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) *
-                             -(math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
-        
-    def forward(self, x):
-        # x = x + Variable(self.pe[:, :x.size(1)], 
-        #                  requires_grad=False)
-        x = x + self.pe[:, :x.size(1)]
-        return self.dropout(x)
-
-
-class MultiLayerLSTM(nn.Module):
-    def __init__(self, in_feat, hidden_size, dropout=0.):
-        super().__init__()
-        self.layers = nn.ModuleList()
-        for i, width in enumerate(hidden_size):
-            input_size = in_feat if i == 0 else hidden_size[i-1]
-            self.layers.append(nn.LSTM(input_size=input_size, 
-                                     hidden_size=width,
-                                     num_layers=1,
-                                     batch_first=True,
-                                     dropout=dropout if i < len(hidden_size)-1 else 0.))
-    
-    def forward(self, x):
-        for layer in self.layers:
-            x, _ = layer(x)  # Only keep the output, ignore hidden states
-        return x
 
 class deepPTM(nn.Module):
     def __init__(self, in_feat=12,
@@ -59,8 +20,6 @@ class deepPTM(nn.Module):
         self.time_steps = time_steps
         self.device = device
         # TODO: Add initialization
-        # Positional Encoding 
-        # self.positional_encoder = PositionalEncoding(d_model = lstm_config["width"][-1], dropout=0.0)
         # Input LSTM
         self.in_lstm_fw = self._get_multi_layer_lstm(
                 in_feat=in_feat, hidden_size=lstm_config["width"], dropout=lstm_config["dropout"])
@@ -70,10 +29,6 @@ class deepPTM(nn.Module):
             self.in_lstm_bw = self._get_multi_layer_lstm(
                 in_feat=in_feat, hidden_size=lstm_config["width"], dropout=lstm_config["dropout"])
         
-        # self.in_lstm_fw = MultiLayerLSTM(in_feat, lstm_config["width"], lstm_config["dropout"])
-        # if lstm_config["bidirectional"]:
-        #     self.in_lstm_bw = MultiLayerLSTM(in_feat, lstm_config["width"], lstm_config["dropout"])
-
         # KQV encoder
         self.val_enc = self._get_encoder_layers(lstm_config["width"][-1], attn_config["dim"], attn_config["num_heads"])
         self.key_enc = self._get_encoder_layers(lstm_config["width"][-1], attn_config["dim"], attn_config["num_heads"])
@@ -93,9 +48,6 @@ class deepPTM(nn.Module):
             self.out_lstm_bw = self._get_multi_layer_lstm(
                 in_feat=attn_config["out_dim"], hidden_size=lstm_config["width"], dropout=lstm_config["dropout"])
         
-        # self.out_lstm_fw = MultiLayerLSTM(attn_config["out_dim"], lstm_config["width"], lstm_config["dropout"])
-        # if lstm_config["bidirectional"]:
-        #     self.out_lstm_bw = MultiLayerLSTM(attn_config["out_dim"], lstm_config["width"], lstm_config["dropout"])
         self.dec_layer = nn.Linear(lstm_config["width"][-1], 1)
 
     def _get_multi_layer_lstm(self, in_feat, hidden_size=[200, 100], dropout=0.):
@@ -107,15 +59,6 @@ class deepPTM(nn.Module):
                         for i, width in enumerate(hidden_size[1:])]
                         )
         return lstm
-
-    # def _get_multi_layer_lstm(self, in_feat, hidden_size=[200, 100], dropout=0.):
-    #     layers = []
-    #     layers.append(nn.LSTM(input_size=in_feat, hidden_size=hidden_size[0],
-    #                         num_layers=1, batch_first=True, dropout=dropout))
-    #     for i, width in enumerate(hidden_size[1:]):
-    #         layers.append(nn.LSTM(input_size=hidden_size[i], hidden_size=width,
-    #                             num_layers=1, batch_first=True, dropout=dropout))
-    #     return nn.Sequential(*layers)
 
 
     def _get_encoder_layers(self, in_dim, out_dim, num_heads):
@@ -133,14 +76,6 @@ class deepPTM(nn.Module):
 
         x = x_f + x_b
         return x
-
-    # def _run_multi_layer_bi_directional(self, x: torch.Tensor, lstm_fw: nn.Module, lstm_bw: nn.Module) -> torch.Tensor:
-    #     # Forward pass
-    #     x_f = lstm_fw(x)
-    #     # Backward pass
-    #     x_b = lstm_bw(x.flip(dims=[1]))  # Flip along sequence dimension
-    #     return x_f + x_b  # Or consider torch.cat([x_f, x_b], dim=-1)
-
 
     # run type 2 biderictonal LSTM
     def _run_type_2_multi_layer_bi_directional(self, x, lstm_fw, lstm_bw):
@@ -160,12 +95,6 @@ class deepPTM(nn.Module):
         # TODO: Check dimensionalit and in and output codes
         x = packet_batch
 
-        # if self.lstm_bidirectional:
-        #     x = self._run_multi_layer_bi_directional(x, self.in_lstm_fw, self.in_lstm_bw)
-        # else:
-        #     for l in self.in_lstm_fw:
-        #         x = l(x)[0]
-        # Process through LSTMs
         if self.lstm_bidirectional:
             x = self._run_multi_layer_bi_directional(x, self.in_lstm_fw, self.in_lstm_bw)
         else:

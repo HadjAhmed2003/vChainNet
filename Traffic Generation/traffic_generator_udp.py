@@ -2,133 +2,166 @@ import socket
 import random
 import argparse
 import netifaces as ni
-import threading
-import time, os
+import time
 
 
-def get_interface_details(interface_name):
+def get_interface_details(interface_name: str) -> tuple[str, str | None]:
+    """
+    Retrieve IP and MAC address of the given network interface.
+
+    Parameters:
+        interface_name (str): Name of the network interface.
+
+    Returns:
+        tuple: (IP address, MAC address)
+    """
     addrs = ni.ifaddresses(interface_name)
     ip_info = addrs[ni.AF_INET][0]['addr']
-    mac_info = None
-    try:
-        mac_info = addrs[ni.AF_LINK][0]['addr']
-    except KeyError:
-        mac_info = None
+    mac_info = addrs.get(ni.AF_LINK, [{}])[0].get('addr')
     return ip_info, mac_info
 
 
-def send_packet(client_socket, packet, destination_ip, destination_port):
-    """Send packet data over the UDP socket."""
-    client_socket.sendto(packet, (destination_ip, destination_port))
+def send_packet(sock: socket.socket, packet: str, destination_ip: str, destination_port: int) -> None:
+    """
+    Send a UDP packet over the socket.
 
-def poisson_traffic(client_socket, destination_ip, destination_port, rate_mbps, duration, packet_size):
-    """Generate and send Poisson traffic."""
-    rate = (rate_mbps * 1e6) / (packet_size * 8)  # Convert Mbps to packets per second
-    start_time = time.time()
-    packets_sent = 0  # Track the number of packets sent
-    sleep_factor = 1
+    Parameters:
+        sock (socket.socket): The UDP socket.
+        packet (str): Packet payload.
+        destination_ip (str): Destination IP.
+        destination_port (int): Destination port.
+    """
+    sock.sendto(packet.encode(), (destination_ip, destination_port))
+
+
+def poisson_traffic(sock: socket.socket, dst_ip: str, dst_port: int, rate_mbps: float, duration: float, max_packet_size: int) -> None:
+    """
+    Generate Poisson traffic.
+
+    Parameters:
+        sock (socket.socket): UDP socket.
+        dst_ip (str): Destination IP.
+        dst_port (int): Destination port.
+        rate_mbps (float): Target rate in Mbps.
+        duration (float): Duration of traffic in seconds.
+        max_packet_size (int): Max size of a packet in bytes.
+    """
+    rate_pps = (rate_mbps * 1e6) / (max_packet_size * 8)
+    sleep_factor = 1.0
     increase_factor = 1.1
     decrease_factor = 0.99
-    st = time.time()
+
     start_time = time.time()
     total_packet_size = 0
-    while time.time() - st < duration:
-        packet = f"{time.time()}"
-        packet_size = int(random.uniform(30, 1500))
-        packet = packet + "X" * (packet_size - len(packet))
-        send_packet(client_socket, packet.encode(), destination_ip, destination_port)
-        packets_sent += 1  # Increment the packet count
-        interarrival_time = max(0, random.expovariate(rate)) / sleep_factor
-        time.sleep(interarrival_time)
+    second_timer = time.time()
+
+    while time.time() - start_time < duration:
+        packet_size = random.randint(30, max_packet_size)
+        payload = f"{time.time()}" + "X" * max(0, packet_size - len(str(time.time())))
+        send_packet(sock, payload, dst_ip, dst_port)
+
         total_packet_size += packet_size
+        time.sleep(max(0, random.expovariate(rate_pps)) / sleep_factor)
 
-        # Print the traffic rate every second
-        if time.time() - start_time >= 1:
-            actual_rate = (total_packet_size * 8) / (time.time() - start_time) / 1e6  # Convert to Mbps
-            print(f"Actual traffic rate: {actual_rate:.2f} Mbps")
-            packets_sent = 0  # Reset the packet count
-            start_time = time.time()  # Reset the start time for the next second
+        # Log actual transmission rate every second
+        if time.time() - second_timer >= 1.0:
+            elapsed = time.time() - second_timer
+            actual_rate = (total_packet_size * 8) / elapsed / 1e6  # in Mbps
+            print(f"[Poisson] Actual rate: {actual_rate:.2f} Mbps")
+
+            # Adjust sleep_factor
             if actual_rate < rate_mbps:
-                sleep_factor = sleep_factor * increase_factor
+                sleep_factor *= increase_factor
             else:
-                sleep_factor = sleep_factor * decrease_factor
-                if increase_factor > 1.01:
-                    st = time.time()
-                increase_factor = 1.01
+                sleep_factor *= decrease_factor
+
             total_packet_size = 0
+            second_timer = time.time()
 
-def on_off_traffic(client_socket, destination_ip, destination_port, on_rate_mbps, off_rate_mbps, duration, packet_size):
-    """Generate and send ON-OFF traffic."""
-    on_rate = (on_rate_mbps * 1e6) / (packet_size * 8)  # Convert Mbps to packets per second
-    off_rate = (off_rate_mbps * 1e6) / (packet_size * 8)  # Convert Mbps to packets per second
+
+def on_off_traffic(sock: socket.socket, dst_ip: str, dst_port: int, rate_mbps: float, duration: float, max_packet_size: int) -> None:
+    """
+    Generate ON-OFF traffic.
+
+    Parameters:
+        sock (socket.socket): UDP socket.
+        dst_ip (str): Destination IP.
+        dst_port (int): Destination port.
+        rate_mbps (float): Rate during ON period (same used for OFF period distribution).
+        duration (float): Total time to generate traffic.
+        max_packet_size (int): Max packet size in bytes.
+    """
     start_time = time.time()
+
     while time.time() - start_time < duration:
-        on_period = random.expovariate(on_rate)
-        end_on_period = time.time() + on_period
-        print(f'On Period {on_period}')
-        while time.time() < end_on_period:
-            packet = f"{time.time()}"
-            packet_size = int(random.uniform(30, 1500))
-            packet = packet + "X" * (packet_size - len(packet))
-            #packet = f"X" * packet_size
-            send_packet(client_socket, packet.encode(), destination_ip, destination_port)
-            time.sleep(0.01)  # Small delay to simulate packet transmission
-        off_period = random.expovariate(off_rate)
-        print(f'Off Period {off_period}')
-        time.sleep(off_period)
+        on_duration = random.expovariate(rate_mbps)
+        off_duration = random.expovariate(rate_mbps)
 
-def map_traffic(client_socket, destination_ip, destination_port, arrival_rate_mbps, duration, packet_size):
-    """Generate and send Markovian Arrival Process (MAP) traffic."""
-    arrival_rate = (arrival_rate_mbps * 1e6) / (packet_size * 8)  # Convert Mbps to packets per second
-    start_time = time.time()
-    while time.time() - start_time < duration:
-        packet = f"{time.time()}"
-        packet_size = int(random.uniform(30, 1500))
-        packet = packet + "X" * (packet_size - len(packet))
-        #packet = f"X" * packet_size
-        send_packet(client_socket, packet.encode(), destination_ip, destination_port)
-        time.sleep(random.expovariate(arrival_rate))
+        print(f"[ON-OFF] On period: {on_duration:.2f}s, Off period: {off_duration:.2f}s")
 
-def start_server(client_ip, port, traffic_type, rate_mbps, duration, packet_size, server_ip):
-    """Start the server and send packets to the client."""
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Use UDP
-    server_socket.bind((server_ip, port))  # Bind to the specific interface
-    server_socket.setblocking(0)  # Set the socket to non-blocking mode
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1048576)  # 1 MB buffer
+        # ON period: Send packets
+        end_on = time.time() + on_duration
+        while time.time() < end_on:
+            packet_size = random.randint(30, max_packet_size)
+            payload = f"{time.time()}" + "X" * max(0, packet_size - len(str(time.time())))
+            send_packet(sock, payload, dst_ip, dst_port)
+            time.sleep(0.01)
 
-    print(f"Server is sending {traffic_type} traffic to {client_ip}:{port} on interface with IP {server_ip}...")
+        # OFF period: No packets
+        time.sleep(off_duration)
+
+
+
+def start_server(client_ip: str, port: int, traffic_type: str, rate_mbps: float, duration: float,
+                 packet_size: int, server_ip: str) -> None:
+    """
+    Start UDP traffic generation based on the selected traffic type.
+
+    Parameters:
+        client_ip (str): IP address of the client.
+        port (int): Destination port.
+        traffic_type (str): One of ['poisson', 'on_off', 'map'].
+        rate_mbps (float): Traffic rate in Mbps.
+        duration (float): Duration of traffic generation.
+        packet_size (int): Max packet size in bytes.
+        server_ip (str): IP to bind the server socket.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((server_ip, port))
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1048576)
+
+    print(f"[INFO] Sending {traffic_type} traffic to {client_ip}:{port} via {server_ip}")
 
     if traffic_type == "poisson":
-        poisson_traffic(server_socket, client_ip, port, rate_mbps, duration, packet_size)
+        poisson_traffic(sock, client_ip, port, rate_mbps, duration, packet_size)
     elif traffic_type == "on_off":
-        on_off_traffic(server_socket, client_ip, port, rate_mbps, rate_mbps, duration, packet_size)
-    elif traffic_type == "map":
-        map_traffic(server_socket, client_ip, port, rate_mbps, duration, packet_size)
+        on_off_traffic(sock, client_ip, port, rate_mbps, duration, packet_size)
 
-    server_socket.close()
+    sock.close()
+
 
 def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--client_ip", type=str, required=True, help="Client IP address to send traffic to")
-    parser.add_argument("--port", type=int, default=9999, help="Client port")
-    parser.add_argument("--traffic_type", choices=["poisson", "on_off", "map"], default="poisson", help="Type of traffic to generate")
-    parser.add_argument("--rate_mbps", type=int, default=20, help="Rate in Mbps")
-    parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
-    parser.add_argument("--packet_size", type=int, default=1500, help="Packet size in bytes")
-    parser.add_argument("--interface", type=str, default="n3", help="Network interface to use")  # New argument
+    parser = argparse.ArgumentParser(description="UDP Traffic Generator")
+    parser.add_argument("--client_ip", required=True, help="Client IP to send traffic to")
+    parser.add_argument("--port", type=int, default=9999, help="Client UDP port")
+    parser.add_argument("--traffic_type", choices=["poisson", "on_off"], default="poisson", help="Traffic pattern")
+    parser.add_argument("--rate_mbps", type=float, default=20, help="Target rate in Mbps")
+    parser.add_argument("--duration", type=int, default=60, help="Traffic generation duration in seconds")
+    parser.add_argument("--packet_size", type=int, default=1500, help="Maximum packet size in bytes")
+    parser.add_argument("--interface", type=str, default="n3", help="Network interface to use")
 
     return parser.parse_args()
 
+
 if __name__ == "__main__":
     args = get_args()
-    CLIENT_IP = args.client_ip
-    PORT = args.port
-    TRAFFIC_TYPE = args.traffic_type
-    RATE_MBPS = args.rate_mbps
-    DURATION = args.duration
-    PACKET_SIZE = args.packet_size
-    INTERFACE = args.interface  # New variable
+    client_ip = args.client_ip
+    port = args.port
+    traffic_type = args.traffic_type
+    rate_mbps = args.rate_mbps
+    duration = args.duration
+    packet_size = args.packet_size
+    interface = args.interface
 
-    SERVER_IP, _ = get_interface_details(INTERFACE)
-
-    start_server(CLIENT_IP, PORT, TRAFFIC_TYPE, RATE_MBPS, DURATION, PACKET_SIZE, SERVER_IP)  # Pass the interface
+    server_ip, _ = get_interface_details(interface)
+    start_server(client_ip, port, traffic_type, rate_mbps, duration, packet_size, server_ip)
