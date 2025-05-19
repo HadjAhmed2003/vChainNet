@@ -54,13 +54,14 @@ vChainNet/
 │
 ├── Dataset Creation
 │   ├── dataset_creator.py      # Creates per-VNF datasets from profiling data
-│   ├── slice_dataset_creator.py # Creates end-to-end slice datasets
-│   └── traffic_traces.py       # Handles traffic trace processing
+│   └── slice_dataset_creator.py # Creates end-to-end slice datasets
+│   
 │
 ├── Model Implementation
 │   └── deepptm.py              # Deep Packet-Time Model implementation (reference only)
 │
 └── Training and Prediction
+    ├── traffic_traces.py       # Pytorch Dataset Class for the traffic traces
     ├── train_val.py            # Model training and validation (includes shallow LSTM)
     └── e2e_predict.py          # End-to-end prediction (includes shallow LSTM)
 ```
