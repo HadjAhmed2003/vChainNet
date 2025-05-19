@@ -1,0 +1,1 @@
+tshark -r $1 -T fields -E separator=, -E quote=d -e frame.time_epoch -e ip.src -e ip.dst -e ip.id -e ip.len -e frame.len -e frame.protocols -e udp.srcport -e udp.dstport -e udp.length -e udp.payload > $1.csv
